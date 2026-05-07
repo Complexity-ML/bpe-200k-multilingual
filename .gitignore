@@ -1,0 +1,29 @@
+# Derived artifacts
+data/
+*.jsonl
+tokenizer.json
+*.bin
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# HF cache (in case someone runs with HF_HOME=.)
+.cache/
+hf_cache/
