@@ -15,6 +15,9 @@ from tokenizers.trainers import BpeTrainer
 from tokenizers.pre_tokenizers import Sequence as PreSequence, Split, ByteLevel
 from tokenizers.decoders import ByteLevel as ByteLevelDecoder
 from tokenizers.processors import ByteLevel as ByteLevelProcessor
+from tqdm import tqdm
+
+from sample_corpus import SOURCES, build_stream, parse_size, DEFAULT_CODE_LANGS
 
 # o200k_base pre-tokenization pattern (the regex used by GPT-4o / GPT-5).
 # Better than cl100k for non-English text: caps word length, splits long
@@ -49,6 +52,30 @@ def iter_texts(jsonl_paths):
                     continue
 
 
+def iter_streaming(en_bytes, fr_bytes, code_bytes, code_langs, seed):
+    """Yield texts straight from HF streaming, capped per source by byte budget."""
+    SOURCES["code"]["langs"] = code_langs
+    budgets = [("en", en_bytes), ("fr", fr_bytes), ("code", code_bytes)]
+    for key, target in budgets:
+        if target <= 0:
+            continue
+        cfg = SOURCES[key]
+        ds = build_stream(key, seed=seed, shuffle_buffer=10_000)
+        written = 0
+        pbar = tqdm(total=target, unit="B", unit_scale=True, desc=key)
+        for row in ds:
+            text = row.get(cfg["text_field"])
+            if not text:
+                continue
+            yield text
+            n = len(text.encode("utf-8"))
+            written += n
+            pbar.update(n)
+            if written >= target:
+                break
+        pbar.close()
+
+
 def build_tokenizer():
     tokenizer = Tokenizer(BPE(unk_token=None))
     tokenizer.pre_tokenizer = PreSequence([
@@ -62,11 +89,21 @@ def build_tokenizer():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", nargs="+", required=True, help="JSONL files with .text field")
+    ap.add_argument("--data", nargs="*", default=[], help="JSONL files with .text field")
+    ap.add_argument("--streaming", action="store_true",
+                    help="Train directly from HF streaming, no JSONL spill (needs HF auth)")
+    ap.add_argument("--en", default="15GB", help="streaming: bytes of EN to consume")
+    ap.add_argument("--fr", default="15GB")
+    ap.add_argument("--code", default="12GB")
+    ap.add_argument("--code-langs", nargs="+", default=DEFAULT_CODE_LANGS)
+    ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", default="tokenizer.json")
     ap.add_argument("--vocab-size", type=int, default=200_000)
     ap.add_argument("--min-frequency", type=int, default=2)
     args = ap.parse_args()
+
+    if not args.streaming and not args.data:
+        ap.error("provide --data <jsonl files> or --streaming")
 
     tokenizer = build_tokenizer()
     trainer = BpeTrainer(
@@ -78,7 +115,15 @@ def main():
         show_progress=True,
     )
 
-    tokenizer.train_from_iterator(iter_texts(args.data), trainer=trainer)
+    if args.streaming:
+        iterator = iter_streaming(
+            parse_size(args.en), parse_size(args.fr), parse_size(args.code),
+            args.code_langs, args.seed,
+        )
+    else:
+        iterator = iter_texts(args.data)
+
+    tokenizer.train_from_iterator(iterator, trainer=trainer)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     tokenizer.save(str(out))
