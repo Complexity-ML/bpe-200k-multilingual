@@ -1,7 +1,6 @@
 # Derived artifacts
 data/
 *.jsonl
-tokenizer.json
 *.bin
 
 # Python
