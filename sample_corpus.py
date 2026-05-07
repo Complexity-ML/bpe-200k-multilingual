@@ -46,14 +46,17 @@ SOURCES = {
 def build_stream(key, seed, shuffle_buffer):
     cfg = SOURCES[key]
     if key == "code":
-        # One stream per language sub-dir, then interleave with equal probs
+        # One stream per language sub-dir, then interleave with equal probs.
+        # select_columns drops metadata that has inconsistent types across
+        # language sub-dirs (e.g. max_stars_count int64 vs float64), which
+        # would otherwise break interleave_datasets feature-alignment.
         streams = [
             load_dataset(
                 cfg["path"],
                 data_dir=lang,
                 split=cfg["split"],
                 streaming=True,
-            ).shuffle(seed=seed, buffer_size=shuffle_buffer)
+            ).select_columns([cfg["text_field"]]).shuffle(seed=seed, buffer_size=shuffle_buffer)
             for lang in cfg["langs"]
         ]
         return interleave_datasets(streams, seed=seed, stopping_strategy="all_exhausted")
